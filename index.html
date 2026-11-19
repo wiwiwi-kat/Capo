@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111111">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Chord Diary</title>
+<style>
+:root{--bg:#fafaf7;--fg:#1d1d1b;--mute:#8a8a84;--line:#e5e4de;--acc:#c2410c}
+@media(prefers-color-scheme:dark){:root{--bg:#111;--fg:#ececea;--mute:#8d8d88;--line:#2a2a28;--acc:#fb923c}}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,-apple-system,sans-serif;-webkit-tap-highlight-color:transparent}
+button,input,textarea{font:inherit;color:inherit}
+button{background:none;border:1px solid var(--line);border-radius:8px;padding:8px 14px;cursor:pointer}
+button:active{background:var(--line)}
+button.p{background:var(--acc);border-color:var(--acc);color:#fff}
+[hidden]{display:none!important}
+.app{display:flex;flex-direction:column;height:100%;max-width:720px;margin:0 auto;padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom)}
+.bar{display:flex;gap:8px;align-items:center;padding:12px 0}
+.bar h1{font-size:18px;flex:1;font-weight:600}
+.view{display:flex;flex-direction:column;flex:1;min-height:0}
+input{background:none;border:0;border-bottom:1px solid var(--line);padding:8px 2px;outline:none;width:100%}
+input:focus{border-color:var(--acc)}
+ul{list-style:none;padding:0;flex:1;overflow:auto;margin-top:8px}
+li button{display:flex;justify-content:space-between;gap:12px;width:100%;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:14px 2px;text-align:left}
+li small{color:var(--mute);white-space:nowrap}
+.empty{color:var(--mute);padding:32px 2px}
+.foot{display:flex;gap:8px;padding:12px 0}
+#title{font-size:20px;font-weight:600;border:0}
+.tools{display:flex;gap:8px;align-items:center;padding:4px 0 10px}
+.tools span{color:var(--mute);flex:1}
+textarea{flex:1;min-height:0;width:100%;resize:none;border:0;outline:none;background:none;padding:8px 2px;font:15px/1.5 ui-monospace,Menlo,Consolas,monospace;white-space:pre;overflow:auto}
+</style>
+</head>
+<body>
+<div class="app">
+
+<section class="view" id="list">
+  <div class="bar"><h1>Chord Diary</h1><button class="p" id="new">+ New</button></div>
+  <input id="q" type="search" placeholder="Search" autocomplete="off">
+  <ul id="songs"></ul>
+  <p class="empty" id="empty">No songs yet. Tap + New to write one.</p>
+  <div class="foot"><button id="exp">Export</button><button id="imp">Import</button><input id="file" type="file" accept=".json,application/json" hidden></div>
+</section>
+
+<section class="view" id="edit" hidden>
+  <div class="bar"><button id="back">&larr;</button><h1></h1><button id="del">Delete</button></div>
+  <input id="title" placeholder="Song title" autocomplete="off">
+  <div class="tools">
+    <button id="down" aria-label="Transpose down">&minus;1</button>
+    <button id="up" aria-label="Transpose up">+1</button>
+    <button id="acc" aria-label="Sharps or flats">&sharp;</button>
+    <span>transpose</span>
+  </div>
+  <textarea id="text" wrap="off" spellcheck="false" autocapitalize="off" autocorrect="off"
+    placeholder="Write chords above the words:&#10;&#10;Am       F&#10;Hello darkness&#10;&#10;or inside brackets: [Am]Hello [F]darkness"></textarea>
+</section>
+
+</div>
+<script>
+//#core
+const SH=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const FL=['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
+const NOTE={C:0,'C#':1,Db:1,D:2,'D#':3,Eb:3,E:4,F:5,'F#':6,Gb:6,G:7,'G#':8,Ab:8,A:9,'A#':10,Bb:10,B:11};
+const CH=/^[A-G][#b]?(?:maj|min|dim|aug|sus|add|m|M|\+|°|ø|-|\d{1,2}|[#b]\d{1,2}|\([^)]*\))*(?:\/[A-G][#b]?)?$/;
+function tChord(c,s,f){
+  return c.replace(/[A-G][#b]?/g,function(m){
+    if(NOTE[m]===undefined)return m;
+    return (f?FL:SH)[((NOTE[m]+s)%12+12)%12];
+  });
+}
+function isChordLine(l){
+  const t=l.trim().split(/\s+/).filter(Boolean);
+  return t.length>0&&t.some(x=>CH.test(x))&&t.every(x=>CH.test(x)||/^[|\/\-]+$/.test(x)||/^x\d+$/i.test(x));
+}
+function tChordLine(l,s,f){
+  let carry=0;
+  return l.split(/(\s+)/).map(function(p){
+    if(!p)return p;
+    if(/^\s+$/.test(p)){
+      let n=p.length-carry;
+      if(n<1){carry=1-n;n=1}else carry=0;
+      return ' '.repeat(n);
+    }
+    if(CH.test(p)){const q=tChord(p,s,f);carry+=q.length-p.length;return q}
+    return p;
+  }).join('');
+}
+function tText(t,s,f){
+  return t.split(/\r?\n/).map(function(l){
+    if(isChordLine(l))return tChordLine(l,s,f);
+    return l.replace(/\[([^\]\n]+)\]/g,function(m,c){
+      c=c.trim();return CH.test(c)?'['+tChord(c,s,f)+']':m;
+    });
+  }).join('\n');
+}
+//#endcore
+
+const KEY='chord-diary-v1',PREF='chord-diary-flat';
+const $=id=>document.getElementById(id);
+let songs=[],cur=null,flat=false;
+try{songs=JSON.parse(localStorage.getItem(KEY)||'[]');flat=localStorage.getItem(PREF)==='1'}catch(e){songs=[]}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(songs))}catch(e){}}
+function show(v){$('list').hidden=v!=='list';$('edit').hidden=v!=='edit'}
+function fmt(t){return new Date(t).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})}
+
+function renderList(){
+  const q=$('q').value.toLowerCase(),ul=$('songs');
+  ul.textContent='';
+  $('empty').hidden=songs.length>0;
+  songs.filter(s=>(s.title+' '+s.text).toLowerCase().includes(q))
+    .sort((a,b)=>b.updated-a.updated)
+    .forEach(function(s){
+      const li=document.createElement('li'),b=document.createElement('button'),
+            t=document.createElement('span'),d=document.createElement('small');
+      t.textContent=s.title.trim()||'Untitled';d.textContent=fmt(s.updated);
+      b.append(t,d);b.onclick=()=>openSong(s);li.append(b);ul.append(li);
+    });
+}
+function openSong(s){
+  cur=s;$('title').value=s.title;$('text').value=s.text;
+  $('acc').textContent=flat?'\u266D':'\u266F';
+  history.pushState(null,'');show('edit');
+}
+function goList(){
+  if(cur&&!cur.title.trim()&&!cur.text.trim())songs=songs.filter(s=>s!==cur);
+  cur=null;save();renderList();show('list');
+}
+function touch(){cur.title=$('title').value;cur.text=$('text').value;cur.updated=Date.now();save()}
+
+$('new').onclick=function(){
+  const s={id:Date.now().toString(36),title:'',text:'',updated:Date.now()};
+  songs.push(s);openSong(s);$('title').focus();
+};
+$('back').onclick=()=>history.back();
+addEventListener('popstate',()=>{if(!$('edit').hidden)goList()});
+$('del').onclick=function(){
+  if(!confirm('Delete this song?'))return;
+  songs=songs.filter(s=>s!==cur);cur=null;save();history.back();
+};
+$('title').oninput=touch;$('text').oninput=touch;$('q').oninput=renderList;
+function tr(n){$('text').value=tText($('text').value,n,flat);touch()}
+$('up').onclick=()=>tr(1);
+$('down').onclick=()=>tr(-1);
+$('acc').onclick=function(){
+  flat=!flat;try{localStorage.setItem(PREF,flat?'1':'0')}catch(e){}
+  $('acc').textContent=flat?'\u266D':'\u266F';tr(0);
+};
+addEventListener('pagehide',()=>{if(cur)touch()});
+
+$('exp').onclick=function(){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(songs,null,1)],{type:'application/json'}));
+  a.download='chord-diary-'+new Date().toISOString().slice(0,10)+'.json';
+  a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+};
+$('imp').onclick=()=>$('file').click();
+$('file').onchange=function(){
+  const f=this.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=function(){
+    try{
+      const arr=JSON.parse(r.result);if(!Array.isArray(arr))throw 0;
+      let n=0;
+      arr.forEach(function(s){
+        if(!s||typeof s.text!=='string')return;
+        s={id:String(s.id||Date.now()+Math.random()),title:String(s.title||''),text:s.text.replace(/\r\n/g,'\n'),updated:+s.updated||Date.now()};
+        const i=songs.findIndex(x=>x.id===s.id);
+        if(i<0){songs.push(s);n++}else if(s.updated>songs[i].updated){songs[i]=s;n++}
+      });
+      save();renderList();alert(n+' song(s) imported.');
+    }catch(e){alert('That file could not be read.')}
+  };
+  r.readAsText(f);this.value='';
+};
+
+renderList();
+if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();
+if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+</script>
+</body>
+</html>
